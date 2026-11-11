@@ -48,6 +48,11 @@ static long lerLong(void)
 {
     long valor;
     int lido = scanf("%ld", &valor);
+    if (lido == EOF)
+    {
+        printf("\nEntrada encerrada.\n");
+        exit(0);
+    }
     limparBuffer();
     return (lido == 1) ? valor : -1;
 }
@@ -67,7 +72,11 @@ static void lerString(char *destino, size_t tamanho)
         destino[0] = '\0';
         return;
     }
-    destino[strcspn(destino, "\n")] = '\0';
+    char *nl = strchr(destino, '\n');
+    if (nl != NULL)
+        *nl = '\0';
+    else
+        limparBuffer();
 }
 
 static const char *nomeSituacao(SituacaoConta s)
@@ -142,6 +151,7 @@ void cadastrarConta(void)
     Conta nova, existente;
     FILE *arquivo;
 
+    memset(&nova, 0, sizeof(nova));
     printf("Numero da conta: ");
     nova.numero = lerLong();
     if (nova.numero <= 0)
@@ -602,6 +612,29 @@ void extrato(long numeroConta)
     fclose(arquivo);
 }
 
+static void removerTransacoesDaConta(long numero)
+{
+    Transacao t;
+    FILE *in = fopen(ARQ_TRANSACOES, "rb");
+    FILE *out;
+
+    if (in == NULL)
+        return;
+    out = fopen("transacoes.tmp", "wb");
+    if (out == NULL)
+    {
+        fclose(in);
+        return;
+    }
+    while (fread(&t, sizeof(Transacao), 1, in) == 1)
+        if (t.conta != numero)
+            fwrite(&t, sizeof(Transacao), 1, out);
+    fclose(in);
+    fclose(out);
+    remove(ARQ_TRANSACOES);
+    rename("transacoes.tmp", ARQ_TRANSACOES);
+}
+
 int excluirContasEncerradas(void)
 {
     Conta c;
@@ -628,6 +661,7 @@ int excluirContasEncerradas(void)
         if (c.situacao == CONTA_ENCERRADA)
         {
             removidas++;
+            removerTransacoesDaConta(c.numero);
             continue;
         }
 
