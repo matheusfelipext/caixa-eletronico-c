@@ -2,9 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ARQ_CONTAS     "contas.dat"
-#define ARQ_TRANSACOES "transacoes.dat"
-#define ARQ_TEMP       "contas.tmp"
+#define ARQ_CONTAS          "contas.dat"
+#define ARQ_TRANSACOES      "transacoes.dat"
+#define ARQ_TEMP            "contas.tmp"
+#define ARQ_TEMP_TRANSACOES "transacoes.tmp"
+
+/* Os valores sao em reais com centavos; abaixo disso consideramos zero. */
+#define TOLERANCIA 0.005
 
 typedef enum
 {
@@ -44,39 +48,58 @@ static void limparBuffer(void)
         ;
 }
 
-static long lerLong(void)
+/* Le uma linha. Se a entrada acabar (EOF), encerra o programa. */
+static void lerLinha(char *destino, size_t tamanho)
 {
-    long valor;
-    int lido = scanf("%ld", &valor);
-    if (lido == EOF)
+    char *quebra;
+
+    if (fgets(destino, (int)tamanho, stdin) == NULL)
     {
         printf("\nEntrada encerrada.\n");
         exit(0);
     }
-    limparBuffer();
-    return (lido == 1) ? valor : -1;
+
+    quebra = strchr(destino, '\n');
+    if (quebra != NULL)
+        *quebra = '\0';
+    else
+        limparBuffer();
+}
+
+static long lerLong(void)
+{
+    char linha[64];
+    char *fim;
+    long valor;
+
+    lerLinha(linha, sizeof(linha));
+    valor = strtol(linha, &fim, 10);
+
+    if (fim == linha || *fim != '\0')
+        return -1;
+    return valor;
 }
 
 static double lerDouble(void)
 {
+    char linha[64];
+    char *fim;
     double valor;
-    int lido = scanf("%lf", &valor);
-    limparBuffer();
-    return (lido == 1) ? valor : -1.0;
-}
+    int i;
 
-static void lerString(char *destino, size_t tamanho)
-{
-    if (fgets(destino, (int)tamanho, stdin) == NULL)
+    lerLinha(linha, sizeof(linha));
+    for (i = 0; linha[i] != '\0'; i++)
     {
-        destino[0] = '\0';
-        return;
+        if (linha[i] == ',')
+            linha[i] = '.';
     }
-    char *nl = strchr(destino, '\n');
-    if (nl != NULL)
-        *nl = '\0';
-    else
-        limparBuffer();
+
+    valor = strtod(linha, &fim);
+    if (fim == linha || *fim != '\0')
+        return -1.0;
+    if (valor != valor || valor > 1e12) /* NaN ou valor absurdo */
+        return -1.0;
+    return valor;
 }
 
 static const char *nomeSituacao(SituacaoConta s)
@@ -131,6 +154,7 @@ static int registrarTransacao(long conta, long relacionada,
                               TipoTransacao tipo, double valor)
 {
     Transacao t;
+    int ok;
     FILE *arquivo = fopen(ARQ_TRANSACOES, "ab");
 
     if (arquivo == NULL)
@@ -141,7 +165,7 @@ static int registrarTransacao(long conta, long relacionada,
     t.tipo = tipo;
     t.valor = valor;
 
-    int ok = (fwrite(&t, sizeof(Transacao), 1, arquivo) == 1);
+    ok = (fwrite(&t, sizeof(Transacao), 1, arquivo) == 1);
     fclose(arquivo);
     return ok;
 }
@@ -152,6 +176,7 @@ void cadastrarConta(void)
     FILE *arquivo;
 
     memset(&nova, 0, sizeof(nova));
+
     printf("Numero da conta: ");
     nova.numero = lerLong();
     if (nova.numero <= 0)
@@ -173,7 +198,7 @@ void cadastrarConta(void)
     }
 
     printf("Nome do titular: ");
-    lerString(nova.titular, sizeof(nova.titular));
+    lerLinha(nova.titular, sizeof(nova.titular));
     if (nova.titular[0] == '\0')
     {
         printf("Nome invalido.\n");
@@ -181,7 +206,7 @@ void cadastrarConta(void)
     }
 
     printf("CPF: ");
-    lerString(nova.cpf, sizeof(nova.cpf));
+    lerLinha(nova.cpf, sizeof(nova.cpf));
     if (nova.cpf[0] == '\0')
     {
         printf("CPF invalido.\n");
@@ -239,8 +264,7 @@ void consultarConta(void)
     fclose(arquivo);
 }
 
-static int depositarInterno(long numeroConta, double valor,
-                            TipoTransacao tipo, long relacionada)
+static int depositarSaldo(long numeroConta, double valor)
 {
     Conta c;
     FILE *arquivo;
@@ -282,12 +306,10 @@ static int depositarInterno(long numeroConta, double valor,
     }
 
     fclose(arquivo);
-    registrarTransacao(numeroConta, relacionada, tipo, valor);
     return 1;
 }
 
-static int sacarInterno(long numeroConta, double valor,
-                        TipoTransacao tipo, long relacionada)
+static int sacarSaldo(long numeroConta, double valor)
 {
     Conta c;
     FILE *arquivo;
@@ -319,7 +341,7 @@ static int sacarInterno(long numeroConta, double valor,
         return 0;
     }
 
-    if (c.saldo < valor)
+    if (valor - c.saldo > TOLERANCIA)
     {
         printf("Saldo insuficiente (saldo: R$ %.2f).\n", c.saldo);
         fclose(arquivo);
@@ -327,6 +349,8 @@ static int sacarInterno(long numeroConta, double valor,
     }
 
     c.saldo -= valor;
+    if (c.saldo < TOLERANCIA && c.saldo > -TOLERANCIA)
+        c.saldo = 0.0;
 
     if (!atualizarConta(arquivo, &c))
     {
@@ -336,18 +360,27 @@ static int sacarInterno(long numeroConta, double valor,
     }
 
     fclose(arquivo);
-    registrarTransacao(numeroConta, relacionada, tipo, valor);
     return 1;
 }
 
 int depositar(long numeroConta, double valor)
 {
-    return depositarInterno(numeroConta, valor, DEPOSITO, 0);
+    if (!depositarSaldo(numeroConta, valor))
+        return 0;
+
+    if (!registrarTransacao(numeroConta, 0, DEPOSITO, valor))
+        printf("Aviso: nao foi possivel gravar no historico.\n");
+    return 1;
 }
 
 int sacar(long numeroConta, double valor)
 {
-    return sacarInterno(numeroConta, valor, SAQUE, 0);
+    if (!sacarSaldo(numeroConta, valor))
+        return 0;
+
+    if (!registrarTransacao(numeroConta, 0, SAQUE, valor))
+        printf("Aviso: nao foi possivel gravar no historico.\n");
+    return 1;
 }
 
 int transferir(long contaOrigem, long contaDestino, double valor)
@@ -402,21 +435,28 @@ int transferir(long contaOrigem, long contaDestino, double valor)
         return 0;
     }
 
-    if (origem.saldo < valor)
+    if (valor - origem.saldo > TOLERANCIA)
     {
         printf("Saldo insuficiente na origem (saldo: R$ %.2f).\n", origem.saldo);
         return 0;
     }
 
-    if (!sacarInterno(contaOrigem, valor, TRANSFERENCIA_ENVIADA, contaDestino))
+    if (!sacarSaldo(contaOrigem, valor))
         return 0;
 
-    if (!depositarInterno(contaDestino, valor, TRANSFERENCIA_RECEBIDA, contaOrigem))
+    if (!depositarSaldo(contaDestino, valor))
     {
         printf("Falha no deposito. Estornando saque...\n");
-        depositarInterno(contaOrigem, valor, TRANSFERENCIA_RECEBIDA, contaDestino);
+        if (!depositarSaldo(contaOrigem, valor))
+            printf("ERRO GRAVE: nao foi possivel estornar. Confira a conta %ld.\n",
+                   contaOrigem);
         return 0;
     }
+
+    /* Historico: so registra depois que as duas etapas deram certo */
+    if (!registrarTransacao(contaOrigem, contaDestino, TRANSFERENCIA_ENVIADA, valor) ||
+        !registrarTransacao(contaDestino, contaOrigem, TRANSFERENCIA_RECEBIDA, valor))
+        printf("Aviso: nao foi possivel gravar no historico.\n");
 
     return 1;
 }
@@ -496,7 +536,7 @@ int encerrarConta(long numeroConta)
         return 0;
     }
 
-    if (c.saldo != 0.0)
+    if (c.saldo > TOLERANCIA || c.saldo < -TOLERANCIA)
     {
         printf("Conta possui saldo de R$ %.2f. Zere o saldo antes de encerrar.\n", c.saldo);
         fclose(arquivo);
@@ -560,6 +600,7 @@ void extrato(long numeroConta)
 {
     Conta c;
     Transacao t;
+    int existe;
     int total = 0;
     FILE *arquivo;
 
@@ -569,7 +610,7 @@ void extrato(long numeroConta)
         printf("Nenhuma conta cadastrada.\n");
         return;
     }
-    int existe = buscarConta(arquivo, numeroConta, &c);
+    existe = buscarConta(arquivo, numeroConta, &c);
     fclose(arquivo);
 
     if (!existe)
@@ -578,29 +619,27 @@ void extrato(long numeroConta)
         return;
     }
 
-    arquivo = fopen(ARQ_TRANSACOES, "rb");
-    if (arquivo == NULL)
-    {
-        printf("Nenhuma transacao registrada.\n");
-        return;
-    }
-
     printf("\nExtrato da conta %ld - %s\n", c.numero, c.titular);
     printf("%-18s %-14s %s\n", "Tipo", "Valor", "Conta relacionada");
     printf("---------------------------------------------------\n");
 
-    while (fread(&t, sizeof(Transacao), 1, arquivo) == 1)
+    arquivo = fopen(ARQ_TRANSACOES, "rb");
+    if (arquivo != NULL)
     {
-        if (t.conta != numeroConta)
-            continue;
+        while (fread(&t, sizeof(Transacao), 1, arquivo) == 1)
+        {
+            if (t.conta != numeroConta)
+                continue;
 
-        printf("%-18s R$ %-11.2f ", nomeTipoTransacao(t.tipo), t.valor);
-        if (t.contaRelacionada != 0)
-            printf("%ld", t.contaRelacionada);
-        else
-            printf("-");
-        printf("\n");
-        total++;
+            printf("%-18s R$ %-11.2f ", nomeTipoTransacao(t.tipo), t.valor);
+            if (t.contaRelacionada != 0)
+                printf("%ld", t.contaRelacionada);
+            else
+                printf("-");
+            printf("\n");
+            total++;
+        }
+        fclose(arquivo);
     }
 
     if (total == 0)
@@ -608,31 +647,35 @@ void extrato(long numeroConta)
 
     printf("---------------------------------------------------\n");
     printf("Saldo atual: R$ %.2f\n", c.saldo);
-
-    fclose(arquivo);
 }
 
-static void removerTransacoesDaConta(long numero)
+static void removerTransacoesDaConta(long numeroConta)
 {
     Transacao t;
-    FILE *in = fopen(ARQ_TRANSACOES, "rb");
-    FILE *out;
+    FILE *origem = fopen(ARQ_TRANSACOES, "rb");
+    FILE *temp;
 
-    if (in == NULL)
+    if (origem == NULL)
         return;
-    out = fopen("transacoes.tmp", "wb");
-    if (out == NULL)
+
+    temp = fopen(ARQ_TEMP_TRANSACOES, "wb");
+    if (temp == NULL)
     {
-        fclose(in);
+        fclose(origem);
         return;
     }
-    while (fread(&t, sizeof(Transacao), 1, in) == 1)
-        if (t.conta != numero)
-            fwrite(&t, sizeof(Transacao), 1, out);
-    fclose(in);
-    fclose(out);
+
+    while (fread(&t, sizeof(Transacao), 1, origem) == 1)
+    {
+        if (t.conta != numeroConta)
+            fwrite(&t, sizeof(Transacao), 1, temp);
+    }
+
+    fclose(origem);
+    fclose(temp);
+
     remove(ARQ_TRANSACOES);
-    rename("transacoes.tmp", ARQ_TRANSACOES);
+    rename(ARQ_TEMP_TRANSACOES, ARQ_TRANSACOES);
 }
 
 int excluirContasEncerradas(void)
@@ -757,7 +800,7 @@ static void menuExclusaoFisica(void)
 
     printf("ATENCAO: remove DEFINITIVAMENTE todas as contas encerradas.\n");
     printf("Confirma? (s/n): ");
-    lerString(resposta, sizeof(resposta));
+    lerLinha(resposta, sizeof(resposta));
 
     if (resposta[0] == 's' || resposta[0] == 'S')
         excluirContasEncerradas();
@@ -793,16 +836,16 @@ int main(void)
 
         switch (opcao)
         {
-            case 1:  cadastrarConta();     break;
-            case 2:  consultarConta();     break;
-            case 3:  menuDeposito();       break;
-            case 4:  menuSaque();          break;
-            case 5:  menuTransferencia();  break;
-            case 6:  listarContas();       break;
-            case 7:  menuEncerrar();       break;
-            case 8:  menuExtrato();        break;
-            case 9:  menuReativar();       break;
-            case 10: menuExclusaoFisica(); break;
+            case 1:  cadastrarConta();      break;
+            case 2:  consultarConta();      break;
+            case 3:  menuDeposito();        break;
+            case 4:  menuSaque();           break;
+            case 5:  menuTransferencia();   break;
+            case 6:  listarContas();        break;
+            case 7:  menuEncerrar();        break;
+            case 8:  menuExtrato();         break;
+            case 9:  menuReativar();        break;
+            case 10: menuExclusaoFisica();  break;
             case 0:  printf("Saindo...\n"); break;
             default: printf("Opcao invalida.\n");
         }
