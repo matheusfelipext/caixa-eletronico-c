@@ -1,67 +1,68 @@
-# Sistema de Caixa Eletrônico em C
+# Caixa Eletrônico em C
 
-Projeto didático para praticar `struct`, `enum`, funções, ponteiros, arquivos binários, busca e atualização de registros.
+Sistema de caixa eletrônico em linguagem C, executado no terminal, com persistência em **arquivos binários**.
 
-## Arquivos
+## Funcionalidades
 
-- `exercicio_01_caixa_eletronico.c`: solução principal do exercício. Guarda as contas em `contas.dat`.
-- `desafio_01_historico_transacoes.c`: versão do desafio adicional. Além das contas, registra as movimentações em `transacoes.dat` e permite consultar o histórico pelo menu.
+- Cadastrar conta (número, titular e CPF)
+- Consultar conta
+- Depósito, saque e transferência entre contas
+- Listar contas (todas, somente ativas ou somente encerradas)
+- Extrato por conta
+- Encerrar e reativar conta (só encerra com saldo zerado)
+- Excluir definitivamente as contas encerradas (admin)
 
-Cada arquivo `.c` é um programa independente: compile **um de cada vez**.
+## Como compilar e executar
 
-## Como compilar
-
-Com GCC:
+Requer o `gcc` (Linux, macOS, ou MinGW/WSL no Windows).
 
 ```bash
-gcc -std=c11 -Wall -Wextra -pedantic exercicio_01_caixa_eletronico.c -o caixa
+gcc -Wall -Wextra -o caixa caixa.c
 ./caixa
 ```
 
-Para a versão com histórico:
+No Windows (MinGW), execute `caixa.exe`.
 
-```bash
-gcc -std=c11 -Wall -Wextra -pedantic desafio_01_historico_transacoes.c -o caixa_historico
-./caixa_historico
+## Menu
+
+```
+===== CAIXA ELETRONICO =====
+ 1 - Cadastrar conta
+ 2 - Consultar conta
+ 3 - Realizar deposito
+ 4 - Realizar saque
+ 5 - Realizar transferencia
+ 6 - Listar contas
+ 7 - Encerrar conta
+ 8 - Extrato da conta
+ 9 - Reativar conta
+10 - Excluir contas encerradas (admin)
+ 0 - Sair
 ```
 
-No Windows, se o executável não for iniciado por `./`, execute `caixa.exe` ou `caixa_historico.exe`.
+## Arquivos gerados
 
-## Onde os dados são salvos?
+Os arquivos são criados automaticamente na pasta onde o programa é executado:
 
-Os arquivos binários `contas.dat` e `transacoes.dat` são criados automaticamente na pasta em que o programa é executado. Não os apague se quiser manter os dados de testes.
+| Arquivo | Conteúdo | Tamanho de cada registro |
+|---|---|---|
+| `contas.dat` | Contas cadastradas (struct `Conta`) | 144 bytes |
+| `transacoes.dat` | Histórico de movimentações (struct `Transacao`) | 32 bytes |
+| `contas.tmp` | Temporário, usado só na exclusão de contas encerradas | - |
 
-> Os arquivos binários gravam a representação de `struct` usada pelo compilador. São adequados para este exercício local, mas não são um formato portátil para compartilhar dados entre sistemas diferentes ou versões diferentes do programa.
+O `contas.dat` só existe depois do primeiro cadastro, e o `transacoes.dat` depois da primeira movimentação.
 
-## Como estudar o código sem apenas copiar
+> Esses arquivos contêm dados pessoais (CPF), por isso estão no `.gitignore` e **não devem ser enviados ao GitHub**.
 
-Sugestão de ordem de leitura:
+## Regras de negócio
 
-1. **Leia os tipos:** entenda por que `Conta` agrupa os dados do cliente e por que `SituacaoConta` é um `enum`.
-2. **Estude `buscarConta`:** observe o `FILE *`, `fread`, `rewind`, `ftell` e como a função devolve os dados pelo ponteiro `Conta *`.
-3. **Estude `atualizarConta`:** `fseek` posiciona o arquivo no registro encontrado e `fwrite` grava a conta atualizada.
-4. **Siga um depósito:** menu → leitura dos dados → `depositar` → busca → validação → atualização binária.
-5. **Compare saque e depósito:** eles seguem etapas parecidas, mas possuem validações diferentes.
-6. **Estude `transferir`:** as duas contas são validadas antes das alterações. Se a segunda gravação falhar, o código tenta restaurar os valores anteriores.
-7. **Compare as versões:** no desafio, `HISTORICO_ATIVO` fica ativado. Procure `registrarTransacoes`, `Transacao` e `listarHistorico`.
+- Número da conta deve ser maior que zero e único.
+- Valores de depósito, saque e transferência devem ser maiores que zero.
+- Saque e transferência exigem saldo suficiente.
+- Contas encerradas não movimentam (nem recebem nem enviam).
+- Uma conta só pode ser encerrada com saldo igual a zero.
+- Ao excluir uma conta encerrada, suas transações também são removidas.
 
-## Exercícios para você praticar
+## Conceitos usados
 
-Tente resolver estes pequenos passos sem pedir o código completo:
-
-- **Nível 1:** altere uma mensagem do menu e compile novamente.
-- **Nível 2:** faça a listagem mostrar também o CPF.
-- **Nível 3:** adicione um filtro para listar somente contas ativas.
-- **Nível 4:** impeça o cadastro de um CPF que já pertença a outra conta.
-- **Nível 5:** adicione data e hora à estrutura `Transacao` e mostre-as no histórico.
-
-Antes de alterar uma função, escreva em uma frase o que ela recebe, o que precisa verificar e o que deve devolver. Isso ajuda a construir seu raciocínio.
-
-## Observações importantes
-
-- O saldo inicial é zero.
-- Números de conta duplicados são rejeitados.
-- Contas encerradas continuam no arquivo e não podem movimentar dinheiro.
-- Uma conta só pode ser encerrada com saldo zero.
-- Valores de depósito, saque e transferência precisam ser maiores que zero.
-- Esta é uma implementação acadêmica e local, não um sistema bancário real. A recuperação após falhas físicas de disco e a operação concorrente por múltiplos processos exigiriam mecanismos adicionais.
+`struct`, `enum`, ponteiros, funções, manipulação de arquivos binários (`fopen`, `fread`, `fwrite`, `fseek`, `rewind`, `remove`, `rename`) e validação de entrada.
