@@ -1,0 +1,9 @@
+# Executaveis compilados
+caixa
+caixa.exe
+caixa_historico
+caixa_historico.exe
+
+# Dados binarios locais de teste
+contas.dat
+transacoes.dat
